@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Type, Optional
 import time
 import uuid
+import random
 from .creature import Creature, CreatureState, WorldState
 
 
@@ -23,6 +24,20 @@ class IdleState(BehaviorState):
     def enter(self, creature: Creature, world: WorldState) -> None:
         # Minimal energy consumption
         creature.energy = max(0, creature.energy - 1)
+
+        # Happiness changes based on conditions
+        if creature.energy > 70 and creature.hunger < 30:
+            # Well-fed and energetic = happy
+            creature.happiness = min(
+                100, creature.happiness + random.randint(1, 3))
+        elif creature.energy < 30 or creature.hunger > 60:
+            # Low energy or hungry = less happy
+            creature.happiness = max(
+                0, creature.happiness - random.randint(1, 2))
+        else:
+            # Neutral conditions = slight happiness drift
+            change = random.randint(-1, 1)
+            creature.happiness = max(0, min(100, creature.happiness + change))
 
     def update(self, creature: Creature, world: WorldState) -> Optional[CreatureState]:
         # Check death conditions first
@@ -49,7 +64,8 @@ class IdleState(BehaviorState):
 
 class HungryState(BehaviorState):
     def enter(self, creature: Creature, world: WorldState) -> None:
-        creature.happiness = max(0, creature.happiness - 5)
+        # Being hungry makes creatures unhappy
+        creature.happiness = max(0, creature.happiness - random.randint(3, 7))
         # Higher energy consumption when hungry
         creature.energy = max(0, creature.energy - 2)
 
@@ -57,6 +73,11 @@ class HungryState(BehaviorState):
         # Check death conditions first
         if creature.age >= creature.max_age or creature.energy <= 0:
             return CreatureState.DYING
+
+        # Continued hunger makes creatures more unhappy
+        if creature.hunger > 80:
+            creature.happiness = max(
+                0, creature.happiness - random.randint(1, 3))
 
         # If food is available, start eating
         if world.has_food():
@@ -81,12 +102,14 @@ class EatingState(BehaviorState):
             creature.hunger = max(0, creature.hunger - 30)
             # Restore some energy
             creature.energy = min(100, creature.energy + 10)
-            # Eating makes creatures happy
-            creature.happiness = min(100, creature.happiness + 5)
+            # Eating makes creatures VERY happy
+            creature.happiness = min(
+                100, creature.happiness + random.randint(8, 15))
             creature.last_fed = time.time()
         else:
             # No food available, this shouldn't happen but handle gracefully
-            creature.happiness = max(0, creature.happiness - 10)
+            creature.happiness = max(
+                0, creature.happiness - random.randint(5, 10))
 
     def update(self, creature: Creature, world: WorldState) -> Optional[CreatureState]:
         # Check death conditions
@@ -104,8 +127,9 @@ class ReproducingState(BehaviorState):
     def enter(self, creature: Creature, world: WorldState) -> None:
         # Reproduction is energy-intensive
         creature.energy = max(0, creature.energy - 20)
-        # Reproduction increases happiness
-        creature.happiness = min(100, creature.happiness + 15)
+        # Reproduction makes creatures VERY happy (joy of parenthood)
+        creature.happiness = min(
+            100, creature.happiness + random.randint(15, 25))
         creature.last_reproduced = time.time()
 
     def update(self, creature: Creature, world: WorldState) -> Optional[CreatureState]:
@@ -125,10 +149,6 @@ class ReproducingState(BehaviorState):
 
     def _create_offspring(self, parent: Creature, world: WorldState) -> None:
         """Create a new creature as offspring"""
-        # This is a bit of a hack - we need access to the simulation engine
-        # For now, we'll create the offspring data and rely on the simulation
-        # engine to pick it up via a special mechanism
-
         # Generate offspring with inherited traits
         offspring_name = f"{parent.name}-Jr-{int(time.time() % 1000)}"
 
@@ -137,6 +157,9 @@ class ReproducingState(BehaviorState):
             (-50 + (hash(parent.id) % 100))  # Slight variation
         # Start with good energy
         inherited_energy = min(100, parent.energy + 10)
+        # Inherit some happiness tendency
+        inherited_happiness = max(
+            30, min(70, parent.happiness + random.randint(-10, 10)))
 
         # Store offspring data in parent's traits for simulation engine to pick up
         if 'pending_offspring' not in parent.traits:
@@ -146,6 +169,7 @@ class ReproducingState(BehaviorState):
             'name': offspring_name,
             'max_age': max(500, inherited_max_age),  # Ensure minimum viability
             'energy': inherited_energy,
+            'happiness': inherited_happiness,  # Start with inherited happiness
             'parent_id': parent.id,
             'created_at': time.time()
         }
@@ -157,7 +181,9 @@ class DyingState(BehaviorState):
     def enter(self, creature: Creature, world: WorldState) -> None:
         # Creature is dying, all stats drop
         creature.energy = 0
-        creature.happiness = max(0, creature.happiness - 20)
+        creature.happiness = max(
+            # Dying is very sad
+            0, creature.happiness - random.randint(15, 25))
 
         # Mark death time
         creature.traits['death_time'] = time.time()
@@ -165,7 +191,8 @@ class DyingState(BehaviorState):
 
     def update(self, creature: Creature, world: WorldState) -> Optional[CreatureState]:
         # Death is final - stay in dying state
-        # The simulation engine will remove the creature
+        # Continue to lose happiness while dying
+        creature.happiness = max(0, creature.happiness - random.randint(1, 3))
         return None
 
     def exit(self, creature: Creature, world: WorldState) -> None:
@@ -219,7 +246,7 @@ class BehaviorFSM:
         """Reset transition statistics"""
         self.transition_counts.clear()
 
-# Additional helper functions for the simulation engine
+# Updated helper functions
 
 
 def process_pending_offspring(creatures: Dict[str, Creature], world: WorldState) -> list:
@@ -239,6 +266,8 @@ def process_pending_offspring(creatures: Dict[str, Creature], world: WorldState)
                         name=offspring_data['name'],
                         max_age=offspring_data['max_age'],
                         energy=offspring_data['energy'],
+                        happiness=offspring_data.get(
+                            'happiness', 50),  # Use inherited happiness
                         current_machine=creature.current_machine,
                         traits={
                             'parent_id': offspring_data['parent_id'],
@@ -264,14 +293,17 @@ def get_creature_statistics(creatures: Dict[str, Creature]) -> Dict[str, any]:
             'average_age': 0,
             'average_energy': 0,
             'average_happiness': 0,
+            'average_hunger': 0,
             'state_distribution': {},
             'age_distribution': {},
+            'happiness_distribution': {},
             'generations': {}
         }
 
     total_age = sum(c.age for c in creatures.values())
     total_energy = sum(c.energy for c in creatures.values())
     total_happiness = sum(c.happiness for c in creatures.values())
+    total_hunger = sum(c.hunger for c in creatures.values())
 
     # State distribution
     state_dist = {}
@@ -289,6 +321,21 @@ def get_creature_statistics(creatures: Dict[str, Creature]) -> Dict[str, any]:
         else:
             age_dist['old'] += 1
 
+    # Happiness distribution
+    happiness_dist = {'miserable': 0, 'sad': 0,
+                      'content': 0, 'happy': 0, 'ecstatic': 0}
+    for creature in creatures.values():
+        if creature.happiness < 20:
+            happiness_dist['miserable'] += 1
+        elif creature.happiness < 40:
+            happiness_dist['sad'] += 1
+        elif creature.happiness < 60:
+            happiness_dist['content'] += 1
+        elif creature.happiness < 80:
+            happiness_dist['happy'] += 1
+        else:
+            happiness_dist['ecstatic'] += 1
+
     # Generation tracking
     generations = {}
     for creature in creatures.values():
@@ -300,7 +347,9 @@ def get_creature_statistics(creatures: Dict[str, Creature]) -> Dict[str, any]:
         'average_age': total_age // len(creatures),
         'average_energy': total_energy // len(creatures),
         'average_happiness': total_happiness // len(creatures),
+        'average_hunger': total_hunger // len(creatures),
         'state_distribution': state_dist,
         'age_distribution': age_dist,
+        'happiness_distribution': happiness_dist,
         'generations': generations
     }

@@ -1,6 +1,7 @@
 import time
 import threading
 import uuid
+import random
 from typing import List, Dict
 import logging
 from ..domain.creature import Creature, CreatureState, WorldState
@@ -74,7 +75,9 @@ class SimulationEngine:
         for creature_id in creatures_to_remove:
             dead_creature = self.creatures[creature_id]
             self.logger.info(f"Creature {dead_creature.name} died at age {dead_creature.age} "
-                             f"(cause: {dead_creature.traits.get('death_cause', 'unknown')})")
+                             f"(cause: {dead_creature.traits.get(
+                                 'death_cause', 'unknown')}) "
+                             f"Final happiness: {dead_creature.happiness}")
             del self.creatures[creature_id]
             self.world_state.population_count -= 1
             self._deaths_this_session += 1
@@ -87,7 +90,9 @@ class SimulationEngine:
             self.world_state.population_count += 1
             self._births_this_session += 1
             self.logger.info(f"New creature born: {new_creature.name} "
-                             f"(parent: {new_creature.traits.get('parent_id', 'unknown')[:8]})")
+                             f"(parent: {new_creature.traits.get(
+                                 'parent_id', 'unknown')[:8]}) "
+                             f"Starting happiness: {new_creature.happiness}")
 
         # Periodic logging and saves
         if self._tick_count % 12 == 0:  # Every minute (12 ticks * 5 seconds)
@@ -107,7 +112,6 @@ class SimulationEngine:
 
         # Random environmental changes occasionally
         if self._tick_count % 60 == 0:  # Every 5 minutes
-            import random
             # Small temperature fluctuations
             temp_change = random.randint(-2, 2)
             self.world_state.temperature = max(
@@ -116,14 +120,22 @@ class SimulationEngine:
             # Occasional food abundance or scarcity
             if random.random() < 0.1:  # 10% chance
                 if random.random() < 0.5:
-                    # Food abundance
+                    # Food abundance - makes all creatures happier
                     self.world_state.food = min(
                         self.world_state.max_food, self.world_state.food + 20)
                     self.logger.info("Environmental event: Food abundance!")
+                    # Boost happiness for all creatures
+                    for creature in self.creatures.values():
+                        creature.happiness = min(
+                            100, creature.happiness + random.randint(5, 10))
                 else:
-                    # Food scarcity
+                    # Food scarcity - makes creatures less happy
                     self.world_state.food = max(0, self.world_state.food - 15)
                     self.logger.info("Environmental event: Food scarcity!")
+                    # Reduce happiness for all creatures
+                    for creature in self.creatures.values():
+                        creature.happiness = max(
+                            0, creature.happiness - random.randint(3, 8))
 
         # Update population count
         self.world_state.population_count = len(self.creatures)
@@ -136,19 +148,75 @@ class SimulationEngine:
         # Get hungrier over time
         creature.hunger = min(100, creature.hunger + 2)
 
-        # Gradual happiness decay if creature is old or unhealthy
-        if creature.age > creature.max_age * 0.8 or creature.energy < 30:
-            creature.happiness = max(0, creature.happiness - 1)
+        # Environmental happiness effects
+        # Temperature affects happiness
+        if self.world_state.temperature < 15 or self.world_state.temperature > 25:
+            # Uncomfortable temperature
+            creature.happiness = max(
+                0, creature.happiness - random.randint(0, 2))
+        elif 18 <= self.world_state.temperature <= 22:
+            # Perfect temperature
+            creature.happiness = min(
+                100, creature.happiness + random.randint(0, 1))
 
-        # Apply FSM behavior
+        # Social happiness - creatures are happier when there are others around
+        population_ratio = len(self.creatures) / \
+            self.world_state.max_population
+        if population_ratio > 0.8:
+            # Overcrowding stress
+            creature.happiness = max(
+                0, creature.happiness - random.randint(1, 2))
+        elif 0.3 <= population_ratio <= 0.7:
+            # Good social balance
+            creature.happiness = min(
+                100, creature.happiness + random.randint(0, 1))
+        elif population_ratio < 0.1:
+            # Loneliness
+            creature.happiness = max(
+                0, creature.happiness - random.randint(0, 1))
+
+        # Age-related happiness changes
+        age_ratio = creature.age / creature.max_age
+        if age_ratio > 0.9:
+            # Very old - declining happiness
+            creature.happiness = max(
+                0, creature.happiness - random.randint(1, 3))
+        elif age_ratio > 0.8:
+            # Old age starting to affect happiness
+            creature.happiness = max(
+                0, creature.happiness - random.randint(0, 2))
+        elif 0.2 <= age_ratio <= 0.6:
+            # Prime of life - naturally happy
+            creature.happiness = min(
+                100, creature.happiness + random.randint(0, 1))
+
+        # Energy affects happiness
+        if creature.energy < 20:
+            # Low energy makes creatures sad
+            creature.happiness = max(
+                0, creature.happiness - random.randint(2, 4))
+        elif creature.energy > 80:
+            # High energy makes creatures happy
+            creature.happiness = min(
+                100, creature.happiness + random.randint(0, 2))
+
+        # Apply FSM behavior (which will also modify happiness)
         self.behavior_fsm.update_creature(creature, self.world_state)
 
     def _log_population_status(self):
         """Log current population status"""
         stats = get_creature_statistics(self.creatures)
+        happiness_dist = stats.get('happiness_distribution', {})
+        happy_count = happiness_dist.get(
+            'happy', 0) + happiness_dist.get('ecstatic', 0)
+        sad_count = happiness_dist.get(
+            'miserable', 0) + happiness_dist.get('sad', 0)
+
         self.logger.info(f"Population: {stats['total_population']}, "
                          f"Avg Age: {stats['average_age']}, "
                          f"Avg Energy: {stats['average_energy']}, "
+                         f"Avg Happiness: {stats['average_happiness']}, "
+                         f"Happy: {happy_count}, Sad: {sad_count}, "
                          f"Food: {self.world_state.food}, "
                          f"Births: {self._births_this_session}, "
                          f"Deaths: {self._deaths_this_session}")
@@ -161,17 +229,21 @@ class SimulationEngine:
         if not name:
             name = f"Thronglet-{len(self.creatures):04d}"
 
+        # Random starting happiness (but not too extreme)
+        starting_happiness = random.randint(40, 60)
+
         creature = Creature(
             id=str(uuid.uuid4()),
             name=name,
+            happiness=starting_happiness,
             current_machine=self.get_machine_id(),
             traits={'generation': 0, 'birth_time': time.time()}
         )
 
         self.creatures[creature.id] = creature
         self.world_state.population_count += 1
-        self.logger.info(f"Creature added: {
-                         creature.name} ({creature.id[:8]})")
+        self.logger.info(f"Creature added: {creature.name} ({creature.id[:8]}) "
+                         f"Starting happiness: {creature.happiness}")
         return creature
 
     def remove_creature(self, creature_id: str) -> bool:
@@ -221,6 +293,8 @@ class SimulationEngine:
         for creature in self.creatures.values():
             if 'generation' not in creature.traits:
                 creature.traits['generation'] = 0
+            # Ensure happiness is within bounds for loaded creatures
+            creature.happiness = max(0, min(100, creature.happiness))
 
         self.logger.info(
             f"Loaded {len(self.creatures)} creatures from storage")
@@ -244,6 +318,8 @@ class SimulationEngine:
                 creature.state != CreatureState.DYING):
 
             creature.state = CreatureState.REPRODUCING
+            self.logger.info(f"Forced reproduction for {
+                             creature.name} (happiness: {creature.happiness})")
             return True
         return False
 
@@ -254,7 +330,11 @@ class SimulationEngine:
             if creature.hunger > 50:
                 creature.hunger = max(0, creature.hunger - 40)
                 creature.energy = min(100, creature.energy + 10)
+                # Emergency feeding makes creatures happy
+                creature.happiness = min(
+                    100, creature.happiness + random.randint(5, 15))
                 fed_count += 1
 
-        self.logger.info(f"Emergency feeding: {fed_count} creatures fed")
+        self.logger.info(f"Emergency feeding: {
+                         fed_count} creatures fed and made happier")
         return fed_count
