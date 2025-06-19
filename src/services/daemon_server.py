@@ -3,6 +3,7 @@ import json
 import threading
 from typing import Dict, Any
 import logging
+import time
 
 
 class DaemonServer:
@@ -81,6 +82,8 @@ class DaemonServer:
             return self._add_creature(name)
         elif command == 'network':
             return self._get_network_status()
+        elif command == 'network_overview':  # NEW COMMAND
+            return self._get_network_overview()
         elif command == 'stats':
             return self._get_detailed_stats()
         elif command == 'feed_all':
@@ -88,11 +91,144 @@ class DaemonServer:
         elif command == 'force_reproduce':
             creature_id = request.get('creature_id')
             return self._force_reproduction(creature_id)
-        elif command == 'force_migration':  # ADD THIS LINE
-            creature_name = request.get('creature_name')  # ADD THIS LINE
-            return self._force_migration(creature_name)  # ADD THIS LINE
+        elif command == 'force_migration':
+            creature_name = request.get('creature_name')
+            return self._force_migration(creature_name)
         else:
             return {"error": f"Unknown command: {command}"}
+
+    def _get_network_overview(self) -> Dict[str, Any]:
+        """Get comprehensive network overview including all peer data"""
+        try:
+            # Start with local machine data
+            local_data = {
+                self.simulation.get_machine_id(): {
+                    'host': 'localhost',
+                    'population': len(self.simulation.creatures),
+                    'max_population': self.simulation.world_state.max_population,
+                    'food': self.simulation.world_state.food,
+                    'max_food': self.simulation.world_state.max_food,
+                    'temperature': self.simulation.world_state.temperature,
+                    'last_seen': time.time(),
+                    'is_local': True,
+                    'state_counts': self._get_state_counts()
+                }
+            }
+
+            # Collect data from all connected peers
+            ecosystem_data = local_data.copy()
+
+            if self.simulation.network_manager:
+                peers = self.simulation.network_manager.get_connected_peers()
+
+                for peer in peers:
+                    # Query each peer for their detailed status
+                    peer_data = self._query_peer_status(peer)
+                    if peer_data:
+                        ecosystem_data[peer.machine_id] = {
+                            'host': peer.host,
+                            'population': peer_data.get('population', peer.population_count),
+                            'max_population': peer_data.get('max_population', 50),
+                            'food': peer_data.get('food', peer.available_food),
+                            'max_food': peer_data.get('max_food', 100),
+                            'temperature': peer_data.get('temperature', 20),
+                            'last_seen': peer.last_seen,
+                            'is_local': False,
+                            'state_counts': peer_data.get('state_counts', {})
+                        }
+
+            # Get migration activity data
+            migration_activity = self._get_migration_activity()
+
+            return {
+                'ecosystem_data': ecosystem_data,
+                'migration_activity': migration_activity,
+                'timestamp': time.time()
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error getting network overview: {e}")
+            return {"error": f"Failed to get network overview: {str(e)}"}
+
+    def _query_peer_status(self, peer) -> Dict[str, Any]:
+        """Query a specific peer for detailed status information"""
+        try:
+            if not self.simulation.network_manager:
+                return None
+
+            # Create status request message
+            from ..infrastructure.network_protocol import NetworkMessage, MessageType
+            import uuid
+
+            status_request = NetworkMessage(
+                message_type=MessageType.HEARTBEAT,  # Reuse heartbeat for status
+                sender_id=self.simulation.get_machine_id(),
+                recipient_id=peer.machine_id,
+                timestamp=time.time(),
+                payload={'request_detailed_status': True},
+                message_id=str(uuid.uuid4())
+            )
+
+            # Send request and get response
+            response = self.simulation.network_manager._send_reliable_message(
+                peer, status_request)
+
+            if response and response.payload:
+                return response.payload
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error querying peer {peer.machine_id}: {e}")
+            return None
+
+    def _get_state_counts(self) -> Dict[str, int]:
+        """Get count of creatures in each state"""
+        state_counts = {}
+        for creature in self.simulation.creatures.values():
+            state = creature.state.value
+            state_counts[state] = state_counts.get(state, 0) + 1
+        return state_counts
+
+    def _get_migration_activity(self) -> Dict[str, Any]:
+        """Get migration activity statistics"""
+        # This would ideally read from a migration log
+        # For now, return basic data that could be enhanced later
+
+        migration_data = {
+            'total_migrations': 0,
+            'recent_migrations': []
+        }
+
+        # Check if we have migration logs
+        try:
+            from pathlib import Path
+            migration_log = Path("/opt/thronglet/data/migrations.log")
+            if not migration_log.exists():
+                migration_log = Path("data/migrations.log")
+
+            if migration_log.exists():
+                # Read recent migration events
+                with open(migration_log, 'r') as f:
+                    lines = f.readlines()
+
+                migration_data['total_migrations'] = len(lines)
+
+                # Parse recent migrations (last 10)
+                recent_lines = lines[-10:] if len(lines) > 10 else lines
+                for line in recent_lines:
+                    try:
+                        import json
+                        timestamp, event_json = line.strip().split(': ', 1)
+                        event = json.loads(event_json)
+                        migration_data['recent_migrations'].append(event)
+                    except:
+                        continue  # Skip malformed lines
+
+        except Exception as e:
+            self.logger.error(f"Error reading migration activity: {e}")
+
+        return migration_data
 
     def _force_migration(self, creature_name: str = None) -> Dict[str, Any]:
         """Force migration of a specific creature"""

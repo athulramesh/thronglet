@@ -1,12 +1,239 @@
 import argparse
 import sys
-from typing import List
+from typing import List, Dict, Any
 from ..services.daemon_client import DaemonClient
 
 
 class ThrongletCLI:
     def __init__(self):
         self.daemon_client = DaemonClient()
+
+    def network_overview(self):
+        """Show comprehensive network-wide view of all machines and creatures"""
+        if not self.daemon_client.is_daemon_running():
+            print("Error: Daemon is not running. Start with: python daemon.py")
+            return
+
+        # Get network status and peer details
+        network_response = self.daemon_client.send_command("network_overview")
+        if not network_response or "error" in network_response:
+            print(f"Error getting network overview: {
+                  network_response.get('error', 'Unknown error')}")
+            return
+
+        print("=" * 80)
+        print("🌐 THRONGLET ECOSYSTEM NETWORK OVERVIEW")
+        print("=" * 80)
+
+        ecosystem_data = network_response['ecosystem_data']
+
+        # Network summary
+        total_machines = len(ecosystem_data)
+        total_population = sum(machine['population']
+                               for machine in ecosystem_data.values())
+        total_food = sum(machine['food']
+                         for machine in ecosystem_data.values())
+        avg_temperature = sum(machine['temperature'] for machine in ecosystem_data.values(
+        )) / total_machines if total_machines > 0 else 0
+
+        print(f"\n📊 ECOSYSTEM SUMMARY")
+        print(f"  Connected Machines: {total_machines}")
+        print(f"  Total Population: {total_population}")
+        print(f"  Total Food Available: {total_food}")
+        print(f"  Average Temperature: {avg_temperature:.1f}°C")
+
+        # Calculate ecosystem health
+        health_score = self._calculate_ecosystem_health(ecosystem_data)
+        health_emoji = "🟢" if health_score > 0.7 else "🟡" if health_score > 0.4 else "🔴"
+        print(f"  Ecosystem Health: {health_emoji} {health_score*100:.1f}%")
+
+        # Machine details
+        print(f"\n🖥️  MACHINE STATUS")
+        print("-" * 80)
+
+        for machine_id, data in ecosystem_data.items():
+            is_local = data.get('is_local', False)
+            local_indicator = " (LOCAL)" if is_local else ""
+
+            print(f"\n📍 {machine_id}{local_indicator}")
+            print(f"   Address: {data.get('host', 'localhost')}")
+            print(f"   Population: {
+                  data['population']}/{data.get('max_population', 50)} creatures")
+            print(f"   Food: {data['food']}/{data.get('max_food', 100)} units")
+            print(f"   Temperature: {data['temperature']}°C")
+            print(f"   Last Seen: {
+                  self._format_last_seen(data.get('last_seen', 0))}")
+
+            # State distribution
+            if 'state_counts' in data and data['state_counts']:
+                print(f"   States: ", end="")
+                state_emojis = {'idle': '😴', 'hungry': '🍽️',
+                                'eating': '😋', 'reproducing': '💕', 'dying': '💀'}
+                states = []
+                for state, count in data['state_counts'].items():
+                    emoji = state_emojis.get(state, '❓')
+                    states.append(f"{emoji}{count}")
+                print(" | ".join(states))
+
+        # Migration activity
+        migration_data = network_response.get('migration_activity', {})
+        if migration_data:
+            print(f"\n🔄 MIGRATION ACTIVITY")
+            print("-" * 40)
+            total_migrations = migration_data.get('total_migrations', 0)
+            recent_migrations = migration_data.get('recent_migrations', [])
+
+            print(f"Total Migrations This Session: {total_migrations}")
+            if recent_migrations:
+                print("Recent Migrations:")
+                for migration in recent_migrations[-5:]:  # Show last 5
+                    print(f"  • {migration['creature_name']}: {
+                          migration['from']} → {migration['to']}")
+
+        # Population flow analysis
+        print(f"\n📈 POPULATION DYNAMICS")
+        print("-" * 40)
+
+        # Find most/least populated machines
+        if ecosystem_data:
+            most_populated = max(ecosystem_data.items(),
+                                 key=lambda x: x[1]['population'])
+            least_populated = min(ecosystem_data.items(),
+                                  key=lambda x: x[1]['population'])
+
+            print(f"Most Populated: {most_populated[0]} ({
+                  most_populated[1]['population']} creatures)")
+            print(f"Least Populated: {least_populated[0]} ({
+                  least_populated[1]['population']} creatures)")
+
+            # Resource distribution
+            most_food = max(ecosystem_data.items(), key=lambda x: x[1]['food'])
+            least_food = min(ecosystem_data.items(),
+                             key=lambda x: x[1]['food'])
+
+            print(f"Most Food: {most_food[0]} ({most_food[1]['food']} units)")
+            print(f"Least Food: {least_food[0]} ({
+                  least_food[1]['food']} units)")
+
+        # Recommendations
+        recommendations = self._generate_ecosystem_recommendations(
+            ecosystem_data)
+        if recommendations:
+            print(f"\n💡 ECOSYSTEM RECOMMENDATIONS")
+            print("-" * 40)
+            for rec in recommendations:
+                print(f"  • {rec}")
+
+    def _calculate_ecosystem_health(self, ecosystem_data: Dict[str, Any]) -> float:
+        """Calculate overall ecosystem health score (0.0 to 1.0)"""
+        if not ecosystem_data:
+            return 0.0
+
+        health_factors = []
+
+        for machine_data in ecosystem_data.values():
+            # Population balance (not too empty, not overcrowded)
+            pop_ratio = machine_data['population'] / \
+                machine_data.get('max_population', 50)
+            pop_health = 1.0 - abs(0.6 - pop_ratio)  # Optimal around 60%
+
+            # Food availability
+            food_ratio = machine_data['food'] / \
+                machine_data.get('max_food', 100)
+            food_health = min(food_ratio * 2, 1.0)  # Good if > 50%
+
+            # Temperature comfort (18-22°C is ideal)
+            temp = machine_data['temperature']
+            temp_health = 1.0 - abs(20 - temp) / \
+                20 if abs(20 - temp) <= 20 else 0
+
+            machine_health = (pop_health + food_health + temp_health) / 3
+            health_factors.append(machine_health)
+
+        return sum(health_factors) / len(health_factors)
+
+    def _generate_ecosystem_recommendations(self, ecosystem_data: Dict[str, Any]) -> List[str]:
+        """Generate recommendations for ecosystem management"""
+        recommendations = []
+
+        if not ecosystem_data:
+            return ["Start the daemon on multiple machines to create an ecosystem"]
+
+        # Check for imbalances
+        populations = [data['population'] for data in ecosystem_data.values()]
+        foods = [data['food'] for data in ecosystem_data.values()]
+
+        if max(populations) - min(populations) > 10:
+            recommendations.append(
+                "Population imbalance detected - consider manual migration")
+
+        if min(foods) < 20:
+            recommendations.append("Some machines are running low on food")
+
+        if len(ecosystem_data) == 1:
+            recommendations.append(
+                "Connect more machines to enable creature migration")
+
+        # Check for dying ecosystems
+        total_pop = sum(populations)
+        if total_pop < 5:
+            recommendations.append(
+                "Low population - consider adding more creatures")
+
+        return recommendations
+
+    def _format_last_seen(self, timestamp: float) -> str:
+        """Format last seen timestamp"""
+        if timestamp == 0:
+            return "Never"
+
+        import time
+        seconds_ago = time.time() - timestamp
+
+        if seconds_ago < 60:
+            return f"{int(seconds_ago)}s ago"
+        elif seconds_ago < 3600:
+            return f"{int(seconds_ago/60)}m ago"
+        else:
+            return f"{int(seconds_ago/3600)}h ago"
+
+    def ecosystem_map(self):
+        """Show a visual map of the ecosystem network"""
+        if not self.daemon_client.is_daemon_running():
+            print("Error: Daemon is not running. Start with: python daemon.py")
+            return
+
+        network_response = self.daemon_client.send_command("network_overview")
+        if not network_response or "error" in network_response:
+            print(f"Error getting network data: {
+                  network_response.get('error', 'Unknown error')}")
+            return
+
+        ecosystem_data = network_response['ecosystem_data']
+
+        print("🗺️  ECOSYSTEM NETWORK MAP")
+        print("=" * 60)
+
+        # Create a simple visual representation
+        for i, (machine_id, data) in enumerate(ecosystem_data.items()):
+            is_local = data.get('is_local', False)
+
+            # Visual indicators
+            pop_indicator = "🟢" if data['population'] > 0 else "⚫"
+            food_indicator = "🍎" if data['food'] > 50 else "🥜" if data['food'] > 20 else "🪨"
+            local_indicator = "⭐" if is_local else "🖥️"
+
+            print(f"{local_indicator} {machine_id[:12]:<12} {pop_indicator} Pop:{
+                  data['population']:2d} {food_indicator} Food:{data['food']:3d}")
+
+            # Connection lines (simplified)
+            if i < len(ecosystem_data) - 1:
+                print("   ┃")
+
+        print("\nLegend:")
+        print("⭐ = Your machine   🖥️ = Remote machine")
+        print("🟢 = Has creatures  ⚫ = Empty")
+        print("🍎 = Rich food     🥜 = Some food     🪨 = Low food")
 
     def status(self):
         """Show local population status"""
@@ -359,40 +586,56 @@ class ThrongletCLI:
 
 # Update the run method to include new commands
     def run(self, args: List[str]):
-        """Main CLI entry point"""
+        """Main CLI entry point with enhanced network commands"""
         parser = argparse.ArgumentParser(
-            description='Thronglet Virtual Pet Ecosystem')
-        subparsers = parser.add_subparsers(
-            dest='command', help='Available commands')
+            description='Thronglet Virtual Pet Ecosystem',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Network Overview Commands:
+  python main.py overview                  # Complete ecosystem overview
+  python main.py map                       # Visual network map
+  python main.py network                   # Basic network status
+  
+Standard Commands:
+  python main.py status                    # Local machine status
+  python main.py list                      # List local creatures
+  python main.py add "Name"               # Add creature
+  python main.py migrate [creature]       # Force migration
+            """
+        )
+
+        subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
         # Existing commands
         subparsers.add_parser('status', help='Show local population status')
         subparsers.add_parser('list', help='List all creatures')
-        subparsers.add_parser('network', help='Show network status')
+        subparsers.add_parser('network', help='Show basic network status')
+        
+        # Enhanced network commands
+        subparsers.add_parser('overview', help='Complete ecosystem overview')
+        subparsers.add_parser('map', help='Visual network map')
 
         add_parser = subparsers.add_parser('add', help='Add new creature')
         add_parser.add_argument('name', nargs='?', help='Creature name')
 
-        # New migration commands
-        subparsers.add_parser('migration', help='Show migration statistics')
-
-        migrate_parser = subparsers.add_parser(
-            'migrate', help='Force creature migration')
-        migrate_parser.add_argument(
-            'creature_name', nargs='?', help='Creature name to migrate')
+        migrate_parser = subparsers.add_parser('migrate', help='Force creature migration')
+        migrate_parser.add_argument('creature_name', nargs='?', help='Creature name to migrate')
 
         parsed_args = parser.parse_args(args)
 
+        # Execute commands
         if parsed_args.command == 'status':
             self.status()
         elif parsed_args.command == 'list':
             self.list_creatures()
         elif parsed_args.command == 'network':
             self.network_status()
+        elif parsed_args.command == 'overview':
+            self.network_overview()
+        elif parsed_args.command == 'map':
+            self.ecosystem_map()
         elif parsed_args.command == 'add':
             self.add_creature(parsed_args.name)
-        elif parsed_args.command == 'migration':
-            self.migration_status()
         elif parsed_args.command == 'migrate':
             self.force_migration(parsed_args.creature_name)
         else:

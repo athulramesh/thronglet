@@ -4,7 +4,7 @@ import threading
 import time
 import uuid
 import ipaddress
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 import logging
 from ..infrastructure.network_protocol import NetworkMessage, MessageType, CreatureMigrationData
 from config.network_config import *
@@ -388,7 +388,7 @@ class NetworkManager:
         return None
 
     def _migrate_creature(self, creature, target_peer: NetworkPeer) -> bool:
-        """Migrate a creature to target peer"""
+        """Migrate a creature to target peer (enhanced with logging)"""
         try:
             migration_data = CreatureMigrationData(
                 creature_data=creature.prepare_for_migration(),
@@ -409,6 +409,16 @@ class NetworkManager:
 
             if response and response.message_type == MessageType.CREATURE_MIGRATION_ACK:
                 if response.payload.get('accepted', False):
+                    # Log successful migration
+                    self._log_migration_event({
+                        'creature_name': creature.name,
+                        'creature_id': creature.id,
+                        'from': self.machine_id,
+                        'to': target_peer.machine_id,
+                        'timestamp': time.time(),
+                        'reason': 'seeking_better_conditions'
+                    })
+
                     # Remove creature from local simulation
                     self.simulation.remove_creature(creature.id)
                     return True
@@ -421,6 +431,26 @@ class NetworkManager:
         except Exception as e:
             self.logger.error(f"Migration failed: {e}")
             return False
+
+    def _log_migration_event(self, event: Dict[str, Any]):
+        """Log migration event to file"""
+        try:
+            from pathlib import Path
+            import json
+
+            # Try to use system directory first, fall back to local
+            log_dir = Path("/opt/thronglet/data")
+            if not log_dir.exists():
+                log_dir = Path("data")
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            migration_log = log_dir / "migrations.log"
+
+            with open(migration_log, 'a') as f:
+                f.write(f"{time.time()}: {json.dumps(event)}\n")
+
+        except Exception as e:
+            self.logger.error(f"Failed to log migration event: {e}")
 
     def _send_reliable_message(self, peer: NetworkPeer, message: NetworkMessage) -> Optional[NetworkMessage]:
         """Send message via TCP and wait for response"""
@@ -453,20 +483,41 @@ class NetworkManager:
         # Already handled in discovery loop
         return None
 
-    def _handle_heartbeat(self, message: NetworkMessage) -> Optional[NetworkMessage]:
-        """Handle heartbeat message"""
-        # Update peer info and send heartbeat response
+    def _handle_heartbeat(self, message: NetworkMessage) -> NetworkMessage:
+        """Handle heartbeat message with optional detailed status request"""
+        payload = {
+            'population': len(self.simulation.creatures) if self.simulation else 0,
+            'food': self.simulation.world_state.food if self.simulation else 0
+        }
+
+        # Check if detailed status is requested
+        if message.payload.get('request_detailed_status'):
+            payload.update({
+                'max_population': self.simulation.world_state.max_population if self.simulation else 50,
+                'max_food': self.simulation.world_state.max_food if self.simulation else 100,
+                'temperature': self.simulation.world_state.temperature if self.simulation else 20,
+                'state_counts': self._get_local_state_counts() if self.simulation else {}
+            })
+
         return NetworkMessage(
             message_type=MessageType.HEARTBEAT,
             sender_id=self.machine_id,
             recipient_id=message.sender_id,
             timestamp=time.time(),
-            payload={
-                'population': len(self.simulation.creatures) if self.simulation else 0,
-                'food': self.simulation.world_state.food if self.simulation else 0
-            },
+            payload=payload,
             message_id=str(uuid.uuid4())
         )
+
+    def _get_local_state_counts(self) -> Dict[str, int]:
+        """Get count of creatures in each state for local machine"""
+        if not self.simulation:
+            return {}
+
+        state_counts = {}
+        for creature in self.simulation.creatures.values():
+            state = creature.state.value
+            state_counts[state] = state_counts.get(state, 0) + 1
+        return state_counts
 
     def _handle_creature_migration(self, message: NetworkMessage) -> NetworkMessage:
         """Handle incoming creature migration"""
