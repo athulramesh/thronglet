@@ -2,6 +2,7 @@ import socket
 import json
 import threading
 from typing import Dict, Any
+import logging
 
 
 class DaemonServer:
@@ -11,6 +12,7 @@ class DaemonServer:
         self.running = False
         self.server_socket = None
         self.server_thread = None
+        self.logger = logging.getLogger(__name__)
 
     def start(self):
         """Start the IPC server"""
@@ -86,8 +88,68 @@ class DaemonServer:
         elif command == 'force_reproduce':
             creature_id = request.get('creature_id')
             return self._force_reproduction(creature_id)
+        elif command == 'force_migration':  # ADD THIS LINE
+            creature_name = request.get('creature_name')  # ADD THIS LINE
+            return self._force_migration(creature_name)  # ADD THIS LINE
         else:
             return {"error": f"Unknown command: {command}"}
+
+    def _force_migration(self, creature_name: str = None) -> Dict[str, Any]:
+        """Force migration of a specific creature"""
+        # Debug logging
+        self.logger.info(f"Force migration requested for: {creature_name}")
+        self.logger.info(f"Network manager available: {
+                         self.simulation.network_manager is not None}")
+
+        if not hasattr(self.simulation, 'network_manager') or self.simulation.network_manager is None:
+            return {"error": "Network manager not available. Make sure daemon was started properly."}
+
+        peers = self.simulation.network_manager.get_connected_peers()
+        self.logger.info(f"Connected peers: {len(peers)}")
+
+        if not peers:
+            return {"error": "No connected peers for migration. Start daemon on another machine first."}
+
+        # Find creature to migrate
+        target_creature = None
+        if creature_name:
+            # Find by name
+            for creature in self.simulation.creatures.values():
+                if creature.name == creature_name:
+                    target_creature = creature
+                    break
+            if not target_creature:
+                available_names = [
+                    c.name for c in self.simulation.creatures.values()]
+                return {"error": f"Creature '{creature_name}' not found. Available: {available_names}"}
+        else:
+            # Find random eligible creature
+            eligible = [c for c in self.simulation.creatures.values()
+                        if c.can_migrate()]
+            if eligible:
+                import random
+                target_creature = random.choice(eligible)
+
+        if not target_creature:
+            return {"error": "No eligible creatures for migration. Creatures must be age > 50, energy > 30, and not dying/reproducing."}
+
+        if not target_creature.can_migrate():
+            return {"error": f"Creature {target_creature.name} is not eligible for migration (age: {target_creature.age}, energy: {target_creature.energy}, state: {target_creature.state.value})"}
+
+        # Attempt migration
+        best_peer = self.simulation.network_manager._find_best_migration_target()
+        if not best_peer:
+            return {"error": "No suitable migration target found"}
+
+        self.logger.info(f"Attempting migration of {
+                         target_creature.name} to {best_peer.machine_id}")
+        success = self.simulation.network_manager._migrate_creature(
+            target_creature, best_peer)
+
+        return {
+            "success": success,
+            "message": f"{'Successfully migrated' if success else 'Failed to migrate'} {target_creature.name} to {best_peer.machine_id}"
+        }
 
     def _get_status(self) -> Dict[str, Any]:
         """Get simulation status"""
@@ -174,4 +236,18 @@ class DaemonServer:
         return {
             "success": success,
             "message": f"Reproduction {'initiated' if success else 'failed'} for creature {creature_id[:8]}"
+        }
+
+    def _get_network_status(self) -> Dict[str, Any]:
+        """Get network status including peer information"""
+        network_status = self.simulation.get_network_status()
+
+        return {
+            "machine_id": network_status['machine_id'],
+            "connected_peers": network_status['connected_peers'],
+            "peers": [
+                f"{peer['machine_id']} ({
+                    peer['host']}) - Pop: {peer['population']}, Food: {peer['food']}"
+                for peer in network_status['peer_details']
+            ]
         }

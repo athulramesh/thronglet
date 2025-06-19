@@ -36,6 +36,57 @@ class Creature:
         if not self.last_fed:
             self.last_fed = time.time()
 
+    # ADD THESE MIGRATION METHODS:
+
+    def can_migrate(self) -> bool:
+        """Check if creature is eligible for migration"""
+        return (
+            self.state not in [CreatureState.DYING, CreatureState.REPRODUCING] and
+            self.energy > 30 and
+            self.age > 50  # Minimum age for migration
+        )
+
+    def prepare_for_migration(self) -> Dict[str, any]:
+        """Serialize creature data for network transfer"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'age': self.age,
+            'energy': self.energy,
+            'happiness': self.happiness,
+            'hunger': self.hunger,
+            'max_age': self.max_age,
+            'state': self.state.value,
+            'traits': self.traits,
+            'last_fed': self.last_fed,
+            'last_reproduced': self.last_reproduced
+        }
+
+    @classmethod
+    def from_migration_data(cls, data: Dict[str, any], new_machine_id: str) -> 'Creature':
+        """Create creature from migration data"""
+        creature = cls(
+            id=data['id'],
+            name=data['name'],
+            age=data['age'],
+            energy=max(data['energy'] - 5, 10),  # Migration costs energy
+            happiness=data['happiness'],
+            hunger=min(data['hunger'] + 10, 100),  # Migration increases hunger
+            current_machine=new_machine_id,
+            max_age=data['max_age'],
+            state=CreatureState(data['state']),
+            traits=data['traits'],
+            last_fed=data['last_fed'],
+            last_reproduced=data['last_reproduced']
+        )
+
+        # Mark migration in traits
+        creature.traits['last_migration'] = time.time()
+        creature.traits['migration_count'] = creature.traits.get(
+            'migration_count', 0) + 1
+
+        return creature
+
 
 @dataclass
 class WorldState:

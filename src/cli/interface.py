@@ -244,60 +244,145 @@ class ThrongletCLI:
         else:
             return "🤩"  # ecstatic
 
+#     def run(self, args: List[str]):
+#         """Main CLI entry point"""
+#         parser = argparse.ArgumentParser(
+#             description='Thronglet Virtual Pet Ecosystem',
+#             formatter_class=argparse.RawDescriptionHelpFormatter,
+#             epilog="""
+# Examples:
+#   python main.py status                    # Show population status
+#   python main.py list                      # List all creatures
+#   python main.py add "Fluffy"             # Add creature named Fluffy
+#   python main.py stats                     # Detailed statistics
+#   python main.py feed_all                  # Emergency feeding
+#   python main.py reproduce <creature_id>   # Force reproduction
+#   python main.py network                   # Network status
+#             """
+#         )
+#
+#         subparsers = parser.add_subparsers(
+#             dest='command', help='Available commands')
+#
+#         # Status command
+#         subparsers.add_parser('status', help='Show local population status')
+#
+#         # List command
+#         subparsers.add_parser('list', help='List all creatures with details')
+#
+#         # Network command
+#         subparsers.add_parser(
+#             'network', help='Show network connectivity status')
+#
+#         # Add creature command
+#         add_parser = subparsers.add_parser(
+#             'add', help='Add new creature to simulation')
+#         add_parser.add_argument(
+#             'name', nargs='?', help='Creature name (optional)')
+#
+#         # Detailed stats command
+#         subparsers.add_parser(
+#             'stats', help='Show comprehensive simulation statistics')
+#
+#         # Feed all command
+#         subparsers.add_parser(
+#             'feed_all', help='Emergency feeding for all hungry creatures')
+#
+#         # Force reproduction command
+#         reproduce_parser = subparsers.add_parser(
+#             'reproduce', help='Force a creature to reproduce')
+#         reproduce_parser.add_argument('creature_id', nargs='?',
+#                                       help='Creature ID (will prompt if not provided)')
+#
+#         # Parse arguments
+#         parsed_args = parser.parse_args(args)
+#
+#         # Execute commands
+#         if parsed_args.command == 'status':
+#             self.status()
+#         elif parsed_args.command == 'list':
+#             self.list_creatures()
+#         elif parsed_args.command == 'network':
+#             self.network_status()
+#         elif parsed_args.command == 'add':
+#             self.add_creature(parsed_args.name)
+#         elif parsed_args.command == 'stats':
+#             self.detailed_stats()
+#         elif parsed_args.command == 'feed_all':
+#             self.feed_all()
+#         elif parsed_args.command == 'reproduce':
+#             self.force_reproduce(parsed_args.creature_id)
+#         else:
+#             parser.print_help()
+
+    def migration_status(self):
+        """Show migration statistics"""
+        if not self.daemon_client.is_daemon_running():
+            print("Error: Daemon is not running. Start with: python daemon.py")
+            return
+
+        response = self.daemon_client.send_command("stats")
+        if not response or "error" in response:
+            print(f"Error getting migration stats: {
+                  response.get('error', 'Unknown error')}")
+            return
+
+        print("=== Migration Status ===")
+
+        # Show network connectivity
+        network_response = self.daemon_client.send_command("network")
+        if network_response and "error" not in network_response:
+            print(f"Connected to {network_response['connected_peers']} peers")
+            for peer in network_response['peers']:
+                print(f"  - {peer}")
+        else:
+            print("No network connectivity")
+
+    def force_migration(self, creature_name: str = None):
+        """Force migration of a specific creature or random eligible creature"""
+        if not self.daemon_client.is_daemon_running():
+            print("Error: Daemon is not running. Start with: python daemon.py")
+            return
+
+        response = self.daemon_client.send_command(
+            "force_migration", creature_name=creature_name)
+        if not response or "error" in response:
+            print(f"Error forcing migration: {
+                  response.get('error', 'Unknown error')}")
+            return
+
+        if response.get('success'):
+            print(f"Migration initiated: {response.get('message', 'Success')}")
+        else:
+            print(f"Migration failed: {
+                  response.get('message', 'Unknown reason')}")
+
+# Update the run method to include new commands
     def run(self, args: List[str]):
         """Main CLI entry point"""
         parser = argparse.ArgumentParser(
-            description='Thronglet Virtual Pet Ecosystem',
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="""
-Examples:
-  python main.py status                    # Show population status
-  python main.py list                      # List all creatures
-  python main.py add "Fluffy"             # Add creature named Fluffy
-  python main.py stats                     # Detailed statistics
-  python main.py feed_all                  # Emergency feeding
-  python main.py reproduce <creature_id>   # Force reproduction
-  python main.py network                   # Network status
-            """
-        )
-
+            description='Thronglet Virtual Pet Ecosystem')
         subparsers = parser.add_subparsers(
             dest='command', help='Available commands')
 
-        # Status command
+        # Existing commands
         subparsers.add_parser('status', help='Show local population status')
+        subparsers.add_parser('list', help='List all creatures')
+        subparsers.add_parser('network', help='Show network status')
 
-        # List command
-        subparsers.add_parser('list', help='List all creatures with details')
+        add_parser = subparsers.add_parser('add', help='Add new creature')
+        add_parser.add_argument('name', nargs='?', help='Creature name')
 
-        # Network command
-        subparsers.add_parser(
-            'network', help='Show network connectivity status')
+        # New migration commands
+        subparsers.add_parser('migration', help='Show migration statistics')
 
-        # Add creature command
-        add_parser = subparsers.add_parser(
-            'add', help='Add new creature to simulation')
-        add_parser.add_argument(
-            'name', nargs='?', help='Creature name (optional)')
+        migrate_parser = subparsers.add_parser(
+            'migrate', help='Force creature migration')
+        migrate_parser.add_argument(
+            'creature_name', nargs='?', help='Creature name to migrate')
 
-        # Detailed stats command
-        subparsers.add_parser(
-            'stats', help='Show comprehensive simulation statistics')
-
-        # Feed all command
-        subparsers.add_parser(
-            'feed_all', help='Emergency feeding for all hungry creatures')
-
-        # Force reproduction command
-        reproduce_parser = subparsers.add_parser(
-            'reproduce', help='Force a creature to reproduce')
-        reproduce_parser.add_argument('creature_id', nargs='?',
-                                      help='Creature ID (will prompt if not provided)')
-
-        # Parse arguments
         parsed_args = parser.parse_args(args)
 
-        # Execute commands
         if parsed_args.command == 'status':
             self.status()
         elif parsed_args.command == 'list':
@@ -306,11 +391,9 @@ Examples:
             self.network_status()
         elif parsed_args.command == 'add':
             self.add_creature(parsed_args.name)
-        elif parsed_args.command == 'stats':
-            self.detailed_stats()
-        elif parsed_args.command == 'feed_all':
-            self.feed_all()
-        elif parsed_args.command == 'reproduce':
-            self.force_reproduce(parsed_args.creature_id)
+        elif parsed_args.command == 'migration':
+            self.migration_status()
+        elif parsed_args.command == 'migrate':
+            self.force_migration(parsed_args.creature_name)
         else:
             parser.print_help()

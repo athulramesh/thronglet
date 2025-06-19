@@ -2,7 +2,7 @@ import time
 import threading
 import uuid
 import random
-from typing import List, Dict
+from typing import List, Dict, Any
 import logging
 from ..domain.creature import Creature, CreatureState, WorldState
 from ..domain.behavior import BehaviorFSM, process_pending_offspring, get_creature_statistics
@@ -25,6 +25,9 @@ class SimulationEngine:
         self._last_stats_update = time.time()
         self._births_this_session = 0
         self._deaths_this_session = 0
+
+        # Initialize network manager as None
+        self.network_manager = None
 
     def start(self):
         """Start the simulation loop"""
@@ -338,3 +341,46 @@ class SimulationEngine:
         self.logger.info(f"Emergency feeding: {
                          fed_count} creatures fed and made happier")
         return fed_count
+
+    def set_network_manager(self, network_manager):
+        """Set network manager for distributed operations"""
+        self.network_manager = network_manager
+        self.logger.info(f"Network manager {
+                         'connected' if network_manager else 'disconnected'}")
+
+    def get_migration_candidates(self) -> List[Creature]:
+        """Get creatures eligible for migration"""
+        return [
+            creature for creature in self.creatures.values()
+            if creature.can_migrate()
+        ]
+
+    def accept_migrated_creature(self, creature_data: Dict[str, Any], source_machine: str) -> bool:
+        """Accept a creature migrating from another machine"""
+        try:
+            if not self.world_state.can_support_creature():
+                return False
+
+            migrated_creature = Creature.from_migration_data(
+                creature_data, self.get_machine_id())
+            self.creatures[migrated_creature.id] = migrated_creature
+            self.world_state.population_count += 1
+
+            self.logger.info(f"Accepted migrated creature {
+                             migrated_creature.name} from {source_machine}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to accept migrated creature: {e}")
+            return False
+
+    def get_network_status(self) -> Dict:
+        """Get network connectivity status"""
+        if self.network_manager:
+            return self.network_manager.get_network_stats()
+        else:
+            return {
+                'machine_id': self.get_machine_id(),
+                'connected_peers': 0,
+                'peer_details': []
+            }

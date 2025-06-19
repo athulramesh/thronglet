@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from typing import Dict, List
+from typing import Dict, List, Any
 from pathlib import Path
 from ..domain.creature import Creature, CreatureState, WorldState
 
@@ -88,3 +88,22 @@ class FileRepository:
             data = json.load(f)
 
         return WorldState(**data)
+
+    def save_network_peers(self, peers: Dict[str, Any]):
+        """Save network peers to JSON file"""
+        with open(self.peers_file, 'w') as f:
+            json.dump(peers, f, indent=2)
+
+    def load_network_peers(self) -> Dict[str, Any]:
+        """Load network peers from JSON file"""
+        if not self.peers_file.exists():
+            return {}
+
+        with open(self.peers_file, 'r') as f:
+            return json.load(f)
+
+    def save_migration_log(self, migration_event: Dict[str, Any]):
+        """Log migration events for debugging"""
+        log_file = self.data_dir / "migrations.log"
+        with open(log_file, 'a') as f:
+            f.write(f"{time.time()}: {json.dumps(migration_event)}\n")
